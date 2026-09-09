@@ -314,6 +314,21 @@ Results are written to `output/te/Custom_SC_TE_output/`. `/path/to/other_tool/pe
 must contain `barcodes.tsv`/`features.tsv`/`matrix.mtx` (plain or `.gz`), with isoform IDs matching
 `annotation.gtf`.
 
+**Just want transcript structure information**
+
+`--custom_sc_quant` (and the other `*_quant` options) is optional. If you only want to know how each
+transcript in the annotation relates to TEs (Gene-alone / TE-Gene / TE-alone, TE overlap proportions,
+etc.), drop `--custom_sc_quant` entirely:
+
+```bash
+python main.py cal_TE \
+    -gtf annotation.gtf \
+    -te_gtf TE_annotation.gtf \
+    -t 16 \
+    -o output/te
+```
+The per-transcript structure information is written to `output/te/transcript_quantification_with_TE.tsv`.
+
 ---
 
 ## Running Modes
