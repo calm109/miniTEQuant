@@ -659,7 +659,7 @@ python isoform_quantification/main.py cal_TE \
 SAMPLE="sample_name"
 RAW_FQ="${SAMPLE}.ont_reads.fastq.gz"      # or the unaligned dorado BAM
 CID_WHITELIST="chip_cid_whitelist.txt"     # CID [x y], exported from the chip mask
-REF="genome.fa"; GTF="annotation.gtf"; TE_GTF="TE_annotation.gtf"
+REF="genome.fa"; INDEX="genome.mmi"; GTF="annotation.gtf"; TE_GTF="TE_annotation.gtf"
 THREADS=16; OUT_DIR="output/stereo_ont"
 
 # Step 1: split concatenated reads, identify and correct CID / MID (ONT settings)
@@ -668,8 +668,9 @@ python isoform_quantification/sp_tags/run_sp_tags.py \
     -o sp_tags_out -t $THREADS
 # per cell instead of per CID: add  --barcode2spot cid2cell.tsv  (CID <tab> cell_id)
 
-# Step 2: alignment with spl-IsoQuant ONT settings (-x splice, k = 14)
-minimap2 -y -ax splice -k14 --MD --secondary=no -t $THREADS "$REF" sp_tags_out/sp_tags.fastq \
+# Step 2: alignment with spl-IsoQuant ONT settings
+[ ! -f "$INDEX" ] && minimap2 -d "$INDEX" "$REF"
+minimap2 -y -ax splice --MD --secondary=no -G 200k -t $THREADS "$INDEX" sp_tags_out/sp_tags.fastq \
     | samtools sort -@ 8 -o LR.sorted.bam
 
 # Step 3: UMI deduplication per CID and gene (edit distance 4, as spl-IsoQuant)
