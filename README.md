@@ -107,14 +107,13 @@ For Stereo-seq long-read libraries (PacBio HiFi or ONT), use the built-in `sp_ta
 
 ```bash
 # 1. Split concatenated reads, correct CID / MID
-#    --barcode2spot cell_map.tsv:ID_COL:SPOT_COL  -> quantify per cell / spot (omit to quantify per CID)
 python isoform_quantification/sp_tags/run_sp_tags.py \
     -i hifi_reads.fastq.gz \
     -w cid_whitelist.txt \
     --data_type pacbio \
     -o sp_tags_out \
     -t 16
-# -> sp_tags_out/sp_tags.fastq
+# --barcode2spot cell_map.tsv: ID_COL:SPOT_COL  -> quantify per cell / spot (omit to quantify per CID)
 
 # 2. Align (-y copies the CB / UB / XC tags from the read name into the SAM)
 minimap2 -y --secondary=no -ax splice:hq --MD -t 16 genome.mmi sp_tags_out/sp_tags.fastq \
@@ -131,7 +130,7 @@ python isoform_quantification/main.py quantify \
     --st_mode --no_barcode_in_readname -t 16 -o quant_out
 ```
 
-**ONT**: same steps, but run `sp_tags` with `--data_type nanopore`, align with `minimap2 -y --secondary=no -ax splice -k14 --MD` (using an index built with `-x splice -k14`), and always run step 3, because ONT MIDs carry more sequencing errors (see [ONT reads](#ont-reads-stereo-seq--nanopore)).
+**ONT**: same steps, but run `sp_tags` with `--data_type nanopore` (see [ONT reads](#ont-reads-stereo-seq--nanopore)).
 
 Notes:
 - In cell / spot mode (`--barcode2spot`), CIDs that do not belong to any cell are dropped in step 1, so the aligned read count is lower than that of tools that keep every whitelisted CID (e.g. spl-IsoQuant split reads). Check `Molecules dropped: spatial ID not in barcode2spot` in `sp_tags_out/sp_tags.stats.tsv`.
