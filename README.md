@@ -10,6 +10,7 @@ miniTEQuant is a long-read RNA-seq isoform quantification tool that supports sin
 - [Quick Start](#quick-start)
 - [Subcommand: `quantify`](#subcommand-quantify)
 - [Subcommand: `cal_TE`](#subcommand-cal_te)
+- [Module: `sp_tags` (high-resolution spatial barcodes and UMIs)](#module-sp_tags-high-resolution-spatial-barcodes-and-umis)
 - [Running Modes](#running-modes)
 - [Output Files](#output-files)
 
