@@ -133,8 +133,7 @@ python isoform_quantification/main.py quantify \
 **ONT**: same steps, but run `sp_tags` with `--data_type nanopore` (see [ONT reads](#ont-reads-stereo-seq--nanopore)).
 
 Notes:
-- In cell / spot mode (`--barcode2spot`), CIDs that do not belong to any cell are dropped in step 1, so the aligned read count is lower than that of tools that keep every whitelisted CID (e.g. spl-IsoQuant split reads). Check `Molecules dropped: spatial ID not in barcode2spot` in `sp_tags_out/sp_tags.stats.tsv`.
-- Do not pass the CID whitelist to `quantify --barcode_whitelist` in cell / spot mode: the barcodes are already cell / spot names.
+- In cell / spot mode (`--barcode2spot`), CIDs that do not belong to any cell are dropped in step 1, so the aligned read count is lower than that of tools that keep every whitelisted CID.
 
 See [Module: `sp_tags`](#module-sp_tags-high-resolution-spatial-barcodes-and-umis) for the processing steps, all arguments and output formats, [MID (UMI) handling](#mid-umi-handling) for the deduplication strategy, and [Full pipeline examples](#high-resolution-spatial-pipeline-stereo-seq-pacbio-hifi) for complete Stereo-seq scripts including `cal_TE`.
 
