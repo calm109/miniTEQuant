@@ -394,9 +394,7 @@ A read can contain several concatenated molecules, in either orientation; both s
 | default | CID | MID | one per CID (bin1) |
 | `--barcode2spot FILE[:ID_COL:SPOT_COL]` | cell / spot of the CID | CID + MID | one per cell / spot |
 
-- The mapping file is keyed by CID **sequence** (tab-, comma- or whitespace-separated; default columns 0 and 1, 0-based). It can describe segmented cells, bins (e.g. `bin50`) or regions.
 - Molecules whose CID is not in the file (e.g. between cells) are dropped and counted as `Molecules dropped: spatial ID not in barcode2spot` in `sp_tags.stats.tsv`.
-- Spot names are used as barcodes, so whitespace, `--name_sep` and a trailing `-<digits>` are replaced with `.` (e.g. `cell_12-1` → `cell.12.1`).
 
 ### Arguments
 
@@ -412,9 +410,6 @@ A read can contain several concatenated molecules, in either orientation; both s
 | `--require_good_umi` | off | Drop molecules whose MID length is outside 10 ± 3 nt |
 | `--min_bc_score` | CID length − 3 | Minimum alignment score to accept a whitelist CID |
 | `--kmer_size` | `14` (`12` for nanopore) | K-mer size of the whitelist index |
-| `--no_split` | off | Report one molecule per read |
-| `--name_sep` | `_` | Read-name separator; must match `quantify --barcode_separator` |
-| `--prefix` / `-t` / `--chunk_size` / `--keep_tmp` | `sp_tags` / `1` / `10000` / off | Output prefix, worker processes, reads per work unit, keep temporary files |
 
 ### Output files
 
@@ -462,36 +457,12 @@ Barcode detection is the same as for PacBio (as in spl-IsoQuant); three steps di
 | minimap2 | `-ax splice:hq` | `-ax splice -k14` (build the index with `-x splice -k14`) |
 | `run_umi_dedup.py` | optional | recommended |
 
-In simulations with 5 % read error, k-mer 12 recovered 73 % of CIDs (65 % with k-mer 14) with no wrong CIDs, and `--umi_ed 4` reduced reads per molecule from 1.47 to 1.03 while merging 2 of 935 true molecules. CID recovery depends mostly on basecalling accuracy, so use the dorado SUP model.
-
 ### Notes
 
-- **Speed / memory**: install `numba` to accelerate adapter alignment (a pure-Python fallback is slow). Large whitelists use about 2 GB plus ~56 bytes per CID, so crop the whitelist to the tissue region.
+- **Speed / memory**: Large whitelists use about 2 GB plus ~56 bytes per CID, so crop the whitelist to the tissue region.
 - **Kinnex / MAS-Seq**: run PacBio `skera split` first.
 - **Coordinates**: `quantify` does not attach coordinates; join `sp_tags.spatial_positions.csv` / `sp_tags.spot_positions.csv` with `ST_output/isoform/barcodes.tsv` downstream.
 - **Spot mode**: do not pass the CID whitelist to `quantify --barcode_whitelist`, because barcodes are now cell / spot names.
-
----
-
-## Running Modes
-
-### Single-cell mode
-
-Reads carry cell barcode (CB) and UMI (UB) tags. After genome alignment:
-1. Reads are grouped by gene community
-2. Per-cell EM estimates isoform proportions within each cell independently
-3. UMI deduplication collapses reads sharing the same CB + UMI
-4. Outputs sparse MEX matrices (isoform-level and gene-level)
-
-Barcode source (choose one):
-- Flexiplex output: barcodes embedded in read name → use `--barcode_in_readname` (default)
-- SAM tags (CB/UB): e.g. from STARsolo → use `--no_barcode_in_readname --cb_tag CB --umi_tag UB`
-
-### Spatial transcriptomics mode
-
-Identical to single-cell mode but uses spot barcodes. For high-resolution platforms (Stereo-seq), produce the reads with [`sp_tags`](#module-sp_tags-high-resolution-spatial-barcodes-and-umis): by default each spot is a CID and each molecule's MID serves as the UMI; with `sp_tags --barcode2spot` each spot is a cell / bin and the UMI is CID + MID. Additional options:
-- `--barcode_whitelist`: restrict to tissue-covered spots
-- `--tissue_positions`: parsed but not currently attached to the output (see [Spatial transcriptomics mode arguments](#spatial-transcriptomics-mode-arguments)) — join `tissue_positions.csv` on the barcode column downstream if you need coordinates
 
 ---
 
@@ -515,21 +486,7 @@ SC_output/
 
 All files use the standard MEX (Market Exchange Format), directly compatible with `Seurat::ReadMtx()` and `scanpy.read_mtx()`.
 
-**CPM definition (per cell)**:
-
-```
-CPM_i = count_i / total_cell_UMIs × 10^6
-```
-
-CPM is used (not TPM) because UMI counts are not length-biased — each UMI represents one captured transcript molecule regardless of length.
-
 ---
-
-### `quantify --st_mode` → `ST_output/`
-
-Same structure as `SC_output/` but under `ST_output/`. Spot barcodes replace cell barcodes.
-
-`--tissue_positions` is currently not wired into this output (see [Spatial transcriptomics mode arguments](#spatial-transcriptomics-mode-arguments)) — join `tissue_positions.csv` on the barcode column downstream (e.g. against `barcodes.tsv`) to bring in spatial coordinates for Squidpy / SpatialDE.
 
 ---
 
