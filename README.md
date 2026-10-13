@@ -35,6 +35,7 @@ conda env create -f environment.yml
 conda activate miniTEQuant
 conda install -c bioconda -c conda-forge flexiplex
 conda install -c bioconda minimap2
+conda install -c bioconda samtools
 ```
 
 ### Additional dependencies for SC / ST modes
