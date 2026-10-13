@@ -268,7 +268,6 @@ python main.py quantify -gtf <GTF> -o <OUTPUT> [options]
 | Argument | Default | Description |
 |---|---|---|
 | `--barcode_whitelist` | `None` | Path to spatial barcode whitelist file (one barcode per line); barcodes not in the list are discarded |
-| `--tissue_positions` | `None` | Path to `tissue_positions.csv` (Visium format). Currently parsed but **not yet wired into the output** — passing it has no effect on `spot_isoform_counts.tsv` / MEX output in this version; spatial coordinates must be joined in downstream from the original `tissue_positions.csv` using the barcode column |
 
 ---
 
