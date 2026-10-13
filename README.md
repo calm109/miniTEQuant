@@ -262,8 +262,6 @@ python main.py quantify -gtf <GTF> -o <OUTPUT> [options]
 | `--no_barcode_in_readname` | — | Read barcode from SAM tags instead of the read name |
 | `--cb_tag` | `CB` | SAM tag for cell barcode (used with `--no_barcode_in_readname`) |
 | `--umi_tag` | `UB` | SAM tag for UMI (used with `--no_barcode_in_readname`) |
-| `--barcode_separator` | `_` | Separator between read name / barcode / UMI in the read name |
-| `--umi_dedup_hamming` | `0` | Hamming distance threshold for UMI deduplication (0 = exact match, 1 = 1-mismatch allowed). **Currently not applied** by the per-cell / per-spot EM used in `--sc_mode` / `--st_mode` (`sp_em_quantification.py` accepts but ignores it), so UMIs are always collapsed by exact match; for Stereo-seq use `sp_tags/run_umi_dedup.py` (see [MID (UMI) handling](#mid-umi-handling)) |
 
 ### Spatial transcriptomics mode arguments
 
