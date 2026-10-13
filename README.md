@@ -72,13 +72,13 @@ minimap2 -d genome.mmi genome.fa
 minimap2 -y -ax splice --MD --secondary=no -G 200k -t 16 genome.mmi reads.fastq.gz > LR.sam
 
 # PacBio HiFi / Iso-Seq
-minimap2 -y -ax splice:hq --MD --secondary=no -t 16 genome.mmi reads.fastq.gz \
+minimap2 -y --secondary=no -ax splice:hq --MD -t 16 genome.mmi reads.fastq.gz \
     | samtools view -b | samtools sort -@ 8 -t CB -O SAM -o LR.sam
 ```
 
 > **Note:** The `-y` flag propagates read tags (CB, UB) from the FASTQ header into the SAM output — required for SC/ST modes when barcodes are embedded in the read name.
 
-### SC (10x Chromium) and ST (visium) preprocessing: barcode demultiplexing and UMI deduplication
+### SC / ST preprocessing: barcode demultiplexing and UMI deduplication
 
 Before alignment, extract and filter barcodes with flexiplex, then deduplicate UMIs with nailpolish.
 
@@ -101,22 +101,43 @@ nailpolish consensus -t 16 demux.fastq > dedup.fastq
 
 > For ST (Visium), a spatial barcode whitelist is typically available from Space Ranger output. Pass it directly to flexiplex with `-k` instead of the auto-discovered whitelist.
 
-### High-resolution ST preprocessing (Stereo-seq): barcode demultiplexing and UMI deduplication
+### High-resolution ST preprocessing (Stereo-seq): `sp_tags`
 
 For Stereo-seq long-read libraries (PacBio HiFi or ONT), use the built-in `sp_tags` module. It splits concatenated reads into individual molecules, identifies the CID and MID of each molecule, corrects CIDs against the chip whitelist, corrects MID sequencing errors (pre-alignment, edit distance 1 within each CID), optionally aggregates CIDs into cells / spots (`--barcode2spot`), and writes a FASTQ ready for minimap2. After alignment, `run_umi_dedup.py` collapses MIDs per CID and gene before `quantify`.
 
 ```bash
+# 1. Split concatenated reads, correct CID / MID
+#    --barcode2spot cell_map.tsv:ID_COL:SPOT_COL  -> quantify per cell / spot (omit to quantify per CID)
 python isoform_quantification/sp_tags/run_sp_tags.py \
-    -i reads.fastq.gz \
+    -i hifi_reads.fastq.gz \
     -w cid_whitelist.txt \
+    --data_type pacbio \
     -o sp_tags_out \
     -t 16
-# -> sp_tags_out/sp_tags.fastq  (align this file with minimap2, then run quantify --st_mode)
-# ONT reads: add --data_type nanopore, align with `minimap2 -ax splice -k14`, and run
-# sp_tags/run_umi_dedup.py on the alignments before quantify (see "ONT reads" below)
+# -> sp_tags_out/sp_tags.fastq
+
+# 2. Align (-y copies the CB / UB / XC tags from the read name into the SAM)
+minimap2 -y --secondary=no -ax splice:hq --MD -t 16 genome.mmi sp_tags_out/sp_tags.fastq \
+    | samtools sort -@ 8 -o LR.sorted.bam -
+samtools index LR.sorted.bam
+
+# 3. Post-alignment MID deduplication per CID and gene (recommended; optional for HiFi)
+python isoform_quantification/sp_tags/run_umi_dedup.py \
+    -i LR.sorted.bam -g annotation.gtf -o LR.dedup.sam --umi_ed 4 -t 8
+
+# 4. Quantify (barcodes are read from the CB / UB tags)
+python isoform_quantification/main.py quantify \
+    -gtf annotation.gtf -lrsam LR.dedup.sam \
+    --st_mode --no_barcode_in_readname -t 16 -o quant_out
 ```
 
-See [Module: `sp_tags`](#module-sp_tags-high-resolution-spatial-barcodes-and-umis) for the processing steps, all arguments and output formats, and [ONT reads](#ont-reads-stereo-seq--nanopore) for Stereo-seq + ONT.
+**ONT**: same steps, but run `sp_tags` with `--data_type nanopore`, align with `minimap2 -y --secondary=no -ax splice -k14 --MD` (using an index built with `-x splice -k14`), and always run step 3, because ONT MIDs carry more sequencing errors (see [ONT reads](#ont-reads-stereo-seq--nanopore)).
+
+Notes:
+- In cell / spot mode (`--barcode2spot`), CIDs that do not belong to any cell are dropped in step 1, so the aligned read count is lower than that of tools that keep every whitelisted CID (e.g. spl-IsoQuant split reads). Check `Molecules dropped: spatial ID not in barcode2spot` in `sp_tags_out/sp_tags.stats.tsv`.
+- Do not pass the CID whitelist to `quantify --barcode_whitelist` in cell / spot mode: the barcodes are already cell / spot names.
+
+See [Module: `sp_tags`](#module-sp_tags-high-resolution-spatial-barcodes-and-umis) for the processing steps, all arguments and output formats, [MID (UMI) handling](#mid-umi-handling) for the deduplication strategy, and [Full pipeline examples](#high-resolution-spatial-pipeline-stereo-seq-pacbio-hifi) for complete Stereo-seq scripts including `cal_TE`.
 
 ### TE annotation preparation (for `cal_TE`)
 
