@@ -103,7 +103,7 @@ nailpolish consensus -t 16 demux.fastq > dedup.fastq
 
 ### High-resolution ST preprocessing (Stereo-seq): barcode demultiplexing and UMI deduplication
 
-For Stereo-seq long-read libraries (PacBio HiFi or ONT), use the built-in `sp_tags` module **instead of** flexiplex + nailpolish. In one step it splits concatenated reads into individual molecules, identifies the CID (spatial barcode) and MID (UMI) of each molecule, corrects CIDs against the chip whitelist, corrects MID sequencing errors, and writes a FASTQ ready for minimap2:
+For Stereo-seq long-read libraries (PacBio HiFi or ONT), use the built-in `sp_tags` module. It splits concatenated reads into individual molecules, identifies the CID and MID of each molecule, corrects CIDs against the chip whitelist, corrects MID sequencing errors (pre-alignment, edit distance 1 within each CID), optionally aggregates CIDs into cells / spots (`--barcode2spot`), and writes a FASTQ ready for minimap2. After alignment, `run_umi_dedup.py` collapses MIDs per CID and gene before `quantify`.
 
 ```bash
 python isoform_quantification/sp_tags/run_sp_tags.py \
