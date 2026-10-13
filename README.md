@@ -72,7 +72,7 @@ minimap2 -d genome.mmi genome.fa
 minimap2 -y -ax splice --MD --secondary=no -G 200k -t 16 genome.mmi reads.fastq.gz > LR.sam
 
 # PacBio HiFi / Iso-Seq
-minimap2 -y --secondary=no -ax splice:hq --MD -t 16 genome.mmi reads.fastq.gz \
+minimap2 -y -ax splice:hq --MD --secondary=no -t 16 genome.mmi reads.fastq.gz \
     | samtools view -b | samtools sort -@ 8 -t CB -O SAM -o LR.sam
 ```
 
