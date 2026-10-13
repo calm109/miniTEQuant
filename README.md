@@ -10,7 +10,7 @@ miniTEQuant is a long-read RNA-seq isoform quantification tool that supports sin
 - [Quick Start](#quick-start)
 - [Subcommand: `quantify`](#subcommand-quantify)
 - [Subcommand: `cal_TE`](#subcommand-cal_te)
-- [Module: `sp_tags` (high-resolution spatial barcodes and UMIs)](#module-sp_tags-high-resolution-spatial-barcodes-and-umis)
+- [Module: `sp_tags` (high-resolution spatial preprocessing)](#module-sp_tags-high-resolution-spatial-barcodes-and-umis)
 - [Running Modes](#running-modes)
 - [Output Files](#output-files)
 
@@ -18,7 +18,8 @@ miniTEQuant is a long-read RNA-seq isoform quantification tool that supports sin
 
 ## Features
 
-- **Multi-mode support**: single-cell (10x Chromium) and spatial transcriptomics (Visium / Visium HD)
+- **Multi-mode support**: single-cell (10x Chromium) and spatial transcriptomics (Visium / Visium HD / Stereo-seq)
+- **High-resolution spatial preprocessing**: for PacBio HiFi and ONT reads, splits concatenated long reads into molecules, identifies spatial IDs (Stereo-seq CID) and UMIs (Stereo-seq MID), corrects them against a whitelist and by UMI clustering, optionally aggregates CIDs into cells (`--barcode2spot`), and writes reads that plug directly into `--st_mode`
 - **EM-based isoform quantification**: community-based parallel EM on gene-level bipartite graphs
 - **UMI deduplication**: exact-match or Hamming-distance-based UMI collapsing for SC/ST modes
 - **TE quantification**: annotates transcripts by TE overlap and computes TE expression at locus / subfamily / family / class level for per-cell and per-spot data
