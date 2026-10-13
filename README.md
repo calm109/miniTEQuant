@@ -78,7 +78,7 @@ minimap2 -y -ax splice:hq --MD --secondary=no -t 16 genome.mmi reads.fastq.gz \
 
 > **Note:** The `-y` flag propagates read tags (CB, UB) from the FASTQ header into the SAM output — required for SC/ST modes when barcodes are embedded in the read name.
 
-### SC / ST preprocessing: barcode demultiplexing and UMI deduplication
+### SC (10x Chromium) and ST (visium) preprocessing: barcode demultiplexing and UMI deduplication
 
 Before alignment, extract and filter barcodes with flexiplex, then deduplicate UMIs with nailpolish.
 
@@ -101,7 +101,7 @@ nailpolish consensus -t 16 demux.fastq > dedup.fastq
 
 > For ST (Visium), a spatial barcode whitelist is typically available from Space Ranger output. Pass it directly to flexiplex with `-k` instead of the auto-discovered whitelist.
 
-### High-resolution ST preprocessing (Stereo-seq): `sp_tags`
+### High-resolution ST preprocessing (Stereo-seq): barcode demultiplexing and UMI deduplication
 
 For Stereo-seq long-read libraries (PacBio HiFi or ONT), use the built-in `sp_tags` module **instead of** flexiplex + nailpolish. In one step it splits concatenated reads into individual molecules, identifies the CID (spatial barcode) and MID (UMI) of each molecule, corrects CIDs against the chip whitelist, corrects MID sequencing errors, and writes a FASTQ ready for minimap2:
 
