@@ -368,238 +368,108 @@ The per-transcript structure information is written to `output/te/transcript_qua
 
 ## Module: `sp_tags` (high-resolution spatial barcodes and UMIs)
 
-`sp_tags` (in `isoform_quantification/sp_tags/`) prepares long reads from high-resolution spatial platforms for `quantify --st_mode`. Platforms name their identifiers differently (Stereo-seq: CID / MID; 10x: barcode / UMI), so internally every platform is mapped onto two neutral fields — `spatial_id` (position identifier) and `molecule_id` (molecule identifier); output files use the platform's own labels.
-
-Currently supported platform: **Stereo-seq** (`--platform stereo`, default). The detection logic is ported from the Stereo-seq mode of [Spl-IsoQuant](https://github.com/ablab/IsoQuant).
-
-```bash
-python isoform_quantification/sp_tags/run_sp_tags.py -h
-```
+`sp_tags` (in `isoform_quantification/sp_tags/`) turns Stereo-seq long reads (PacBio HiFi or ONT) into tagged reads for `quantify --st_mode`. The detection logic follows the Stereo-seq mode of [Spl-IsoQuant](https://github.com/ablab/IsoQuant). Run `python isoform_quantification/sp_tags/run_sp_tags.py -h` for all options.
 
 ### Stereo-seq read structure
 
-Written 5'→3' in the orientation where the capture oligo comes first (the read may be sequenced in either orientation; both strands are searched):
-
 ```
-PC1 primer | CID (25 nt) | linker | MID (10 nt) | polyT | cDNA (antisense) | TSO | PC1 primer | CID | linker | ...
-\_____________________________ molecule 1 _____________________________/  \_________ molecule 2 ...
+PC1 primer | CID (25 nt) | linker | MID (10 nt) | polyT | cDNA (antisense) | TSO | PC1 primer | CID | ...
+\__________________________ molecule 1 __________________________/  \___ molecule 2 ...
 ```
 
-A single long read can contain several molecules concatenated one after another (each closed by a TSO), possibly in both orientations.
+A read can contain several concatenated molecules, in either orientation; both strands are searched.
 
 ### Processing steps
 
-**Step 1 — Molecule detection** (per read, in parallel with `-t`)
-
-1. **polyT**: find the first polyT stretch (≥ 12 T in a 16-nt window).
-2. **linker**: search for the linker upstream of the polyT; if not found, search the whole read with stricter settings. The linker is the anchor of the molecule — without it, no molecule is reported.
-3. **PC1 primer**: search upstream of the linker; the bases between the primer and the linker are the raw CID.
-4. **CID correction**: whitelist CIDs sharing k-mers (`--kmer_size`, default 14; 12 with `--data_type nanopore`) with the raw CID are retrieved (≥ 2 shared k-mers, top 10 candidates) and aligned to it; the best one is accepted if its score ≥ `--min_bc_score` (default: CID length − 3). Without `-w`, the raw CID is reported uncorrected.
-5. **MID**: the bases between the linker and the polyT (expected 10 nt). If the polyT boundary swallowed trailing T's of the MID, the MID is restored to 10 nt. A MID is marked valid when its length is within 10 ± 3 nt (± 4 with `--no_split`).
-6. **TSO**: searched downstream of the polyT; it marks the end of the molecule. If another linker lies between the polyT and the TSO, the TSO is assigned to the next molecule and the boundary is moved accordingly.
-
-All adapter matches use k-mer seeding followed by local alignment (match +1, mismatch −1, gap −1), so sequencing errors in adapters are tolerated.
-
-**Step 2 — Splitting concatenated reads** (default; disable with `--no_split`)
-
-After a molecule is found, the search restarts 15 nt after its TSO (or 100 nt after its polyT if no TSO was found, always advancing at least 150 nt), until fewer than 50 nt remain. The same scan is repeated on the reverse complement of the read. Each molecule is cut out as a segment from just upstream of its primer to 25 nt past its TSO (or to the end of the read). In reads containing several molecules, only molecules closed by a TSO (i.e. complete) are written to the output reads.
-
-**Step 3 — MID (UMI) error correction**
-
-Within each CID, MIDs are visited from most to least frequent; each MID is merged into the closest more frequent MID within `--umi_ed` edits (default 1), otherwise it is kept as a new molecule. Correction happens before alignment (without gene information), so it is kept conservative. This is the first of three MID stages; see [MID (UMI) handling](#mid-umi-handling) for the full scheme, including the post-alignment deduplication by gene.
-
-**Step 4 — Quantification unit and output**: each molecule's cell barcode (`CB`) is set according to the chosen unit (see [Quantification unit: CID or spot](#quantification-unit-cid-or-spot)), then tagged reads, per-molecule tag table, statistics and (if the whitelist has coordinates) spatial positions are written.
+1. **Detect each molecule**: polyT → linker (the anchor; no linker, no molecule) → PC1 primer → CID (between primer and linker) → MID (between linker and polyT) → TSO (end of the molecule). Adapters are found by k-mer seeding plus local alignment, so sequencing errors are tolerated.
+2. **Correct the CID** against the whitelist (k-mer candidates, then alignment; accepted if score ≥ `--min_bc_score`, default CID length − 3).
+3. **Split concatenated reads** (disable with `--no_split`); in multi-molecule reads only molecules closed by a TSO are written.
+4. **Correct MIDs** within each CID (edit distance ≤ `--umi_ed`, default 1; see [MID (UMI) handling](#mid-umi-handling)).
+5. **Write** the tagged reads, setting `CB` / `UB` according to the quantification unit below.
 
 ### Quantification unit: CID or spot
 
-`quantify --st_mode` produces one count column per cell barcode (`CB`). `sp_tags` chooses what is written as `CB`, so the unit is decided here:
-
 | Mode | `CB` | `UB` | Count matrix columns |
 |---|---|---|---|
-| default (no `--barcode2spot`) | CID | MID | one per CID (bin1) |
-| `--barcode2spot FILE` | spot / cell the CID belongs to | CID + MID | one per spot / cell |
+| default | CID | MID | one per CID (bin1) |
+| `--barcode2spot FILE[:ID_COL:SPOT_COL]` | cell / spot of the CID | CID + MID | one per cell / spot |
 
-With `--barcode2spot`, `UB` is the CID followed by the MID (25 + 10 nt), so molecules from different CIDs of the same spot that happen to share a MID are not merged during UMI deduplication. MID correction is still done within each CID. Molecules whose CID is **not** in the mapping file (e.g. outside every segmented cell) are dropped and counted in `sp_tags.stats.tsv` as `Molecules dropped: spatial ID not in barcode2spot`.
-
-**Mapping file** (plain text or `.gz`; same syntax as spl-IsoQuant `--barcode2spot`):
-
-```
-CID                        cell
-AAACGTACAGTGTTCAAGCATCAAT  1023
-AAAGACAATTATCCGAGAATCCTGC  1023
-AAAGACCGTTAACCGAGAATCCTGA  1187
-```
-
-- Columns are tab-separated (comma- or whitespace-separated if a line has no tab). By default the CID is in column 0 and the spot in column 1; choose other 0-based columns with `FILE:ID_COL:SPOT_COL`, e.g. `--barcode2spot cellbin.tsv:0:3`.
-- Lines whose first field is not a nucleotide sequence (e.g. a header) are skipped. If a CID is listed with several spots, the first is used and a warning is printed.
-- Spot names are used as cell barcodes, so whitespace, the `--name_sep` character and a trailing `-<digits>` (which `quantify` would strip as a 10x GEM suffix) are replaced with `.`, e.g. `cell_12-1` → `cell.12.1`. The number of renamed spots is reported.
-- Only the CIDs detected in the reads are kept in memory, so a chip-wide mapping file is fine.
-- The spot can be anything: a segmented cell (cellbin), a bin (e.g. `bin50_<x>_<y>`, computed as `x // 50`, `y // 50` from the CID coordinates), or an anatomical region.
-- The file must be keyed by CID **sequence**. Cell-segmentation results keyed by chip coordinates (x, y) have to be joined with the whitelist (`CID x y`) first.
+- The mapping file is keyed by CID **sequence** (tab-, comma- or whitespace-separated; default columns 0 and 1, 0-based). It can describe segmented cells, bins (e.g. `bin50`) or regions.
+- Molecules whose CID is not in the file (e.g. between cells) are dropped and counted as `Molecules dropped: spatial ID not in barcode2spot` in `sp_tags.stats.tsv`.
+- Spot names are used as barcodes, so whitespace, `--name_sep` and a trailing `-<digits>` are replaced with `.` (e.g. `cell_12-1` → `cell.12.1`).
 
 ### Arguments
 
 | Argument | Default | Description |
 |---|---|---|
-| `-i` / `--input` (required) | — | One or more long-read files: FASTQ / FASTA (optionally `.gz`) or unaligned BAM (e.g. PacBio HiFi `reads.bam`) |
+| `-i` / `--input` (required) | — | FASTQ / FASTA (optionally `.gz`) or unaligned BAM |
 | `-o` / `--output_dir` (required) | — | Output directory |
-| `-w` / `--whitelist` | `None` | CID whitelist (see format below). Strongly recommended; without it raw, uncorrected CIDs are reported |
-| `--barcode2spot` | `None` | CID → spot / cell mapping, `FILE` or `FILE:ID_COL:SPOT_COL`. If given, quantification is per spot (`CB` = spot, `UB` = CID + MID); if not, per CID. See [Quantification unit](#quantification-unit-cid-or-spot) |
-| `--prefix` | `sp_tags` | Output file prefix |
-| `--platform` | `stereo` | Spatial platform |
-| `--primer` | `CTTCCGATCTATGGCGACCTTATCAG` | Primer upstream of the CID |
-| `--linker` | `TTGTCTTCCTAAGAC` | Linker between CID and MID |
-| `--tso` | `CCCGCCTCTCAGTACGTCAGCAG` | TSO marking the end of a molecule |
-| `--no_split` | off | Do not split concatenated reads; report one molecule per read |
-| `-t` / `--threads` | `1` | Number of worker processes |
-| `--umi_ed` | `1` | Max edit distance to merge MIDs within one CID; `0` disables MID correction |
-| `--require_good_umi` | off | Only write molecules whose MID length is within the expected range |
+| `-w` / `--whitelist` | — | CID whitelist: `CID [x y]` per line (`.gz` allowed). Strongly recommended; with coordinates, position files are also written |
+| `--barcode2spot` | — | CID → cell / spot mapping (see above) |
+| `--data_type` | `pacbio` | `pacbio` or `nanopore` (`ont`); `nanopore` uses k-mer 12 for the CID index |
+| `--primer` / `--linker` / `--tso` | Stereo-seq defaults | Adapter sequences (5'→3', capture-oligo-first orientation); set only for a different kit |
+| `--umi_ed` | `1` | Max edit distance for MID correction within a CID; `0` disables it |
+| `--require_good_umi` | off | Drop molecules whose MID length is outside 10 ± 3 nt |
 | `--min_bc_score` | CID length − 3 | Minimum alignment score to accept a whitelist CID |
-| `--data_type` | `pacbio` | Read technology: `pacbio` or `nanopore` (alias `ont`). `nanopore` sets `--kmer_size 12`; adapter and CID detection are otherwise identical (as in spl-IsoQuant) |
-| `--kmer_size` | `14` (`12` for nanopore) | K-mer size of the whitelist index; `12` rescues CIDs whose sequencing errors destroy most 14-mers, at some speed cost |
-| `--name_sep` | `_` | Separator between read name, CID and MID in output read names; must match `--barcode_separator` of `quantify` |
-| `--chunk_size` | `10000` | Reads per parallel work unit |
-| `--keep_tmp` | off | Keep temporary files |
-
-`--primer`, `--linker` and `--tso` only need to be set when your kit uses different adapter sequences; any of them left out uses the default shown above. Sequences must contain only A/C/G/T and be written 5'→3' in the capture-oligo-first orientation shown in [Stereo-seq read structure](#stereo-seq-read-structure). The adapters actually used are printed at the start of the run.
-
-### Whitelist format
-
-Plain text or `.gz`, whitespace- or comma-separated, header line optional; all barcodes must have the same length (≤ 32 nt):
-
-```
-CID                        x      y
-AAACGTACAGTGTTCAAGCATCAAT  24     15
-AAAGACAATTATCCGAGAATCCTGC  2      17
-```
-
-The `x` / `y` columns are optional; when present, `sp_tags.spatial_positions.csv` is produced. The Stereo-seq chip mask (`.h5`) must first be exported to this text format. Restricting the whitelist to the tissue-covered region of the chip reduces memory use considerably.
+| `--kmer_size` | `14` (`12` for nanopore) | K-mer size of the whitelist index |
+| `--no_split` | off | Report one molecule per read |
+| `--name_sep` | `_` | Read-name separator; must match `quantify --barcode_separator` |
+| `--prefix` / `-t` / `--chunk_size` / `--keep_tmp` | `sp_tags` / `1` / `10000` / off | Output prefix, worker processes, reads per work unit, keep temporary files |
 
 ### Output files
 
 | File | Description |
 |---|---|
-| `sp_tags.fastq` | Tagged reads, one record per molecule (`sp_tags.fasta` if the input is FASTA). Input to minimap2 |
-| `sp_tags.tags.tsv` | One row per detected molecule: `read_id`, `CID`, `MID`, `BC_score`, `valid_UMI`, `strand`, and positions `polyT_start`, `primer_end`, `linker_start`, `linker_end`, `TSO5` (`*` / `-1` = not found) |
-| `sp_tags.stats.tsv` | Counts: input reads, molecules with polyT / primer / linker / TSO / CID / MID, molecules per read, molecules written or skipped, MIDs before and after correction |
-| `sp_tags.spatial_positions.csv` | CID mode, only with a coordinate whitelist: detected CIDs in `tissue_positions.csv` layout (`barcode,in_tissue,array_row,array_col,pxl_row_in_fullres,pxl_col_in_fullres`, with `array_row`/`pxl_row` = y and `array_col`/`pxl_col` = x) |
-| `sp_tags.spots.tsv` | `--barcode2spot` only: one row per spot — `spot`, `n_spatial_ids` (CIDs with molecules), `n_reads`, `x_center`, `y_center` (mean CID coordinate; `NA` without a coordinate whitelist) |
-| `sp_tags.spot_positions.csv` | `--barcode2spot` with a coordinate whitelist: spot centroids in the same `tissue_positions.csv` layout, keyed by spot name |
+| `sp_tags.fastq` | Tagged reads, one per molecule; input to minimap2 |
+| `sp_tags.tags.tsv` | One row per molecule: read, CID, MID, CID score, MID validity, strand, adapter positions |
+| `sp_tags.stats.tsv` | Detection, splitting, correction and filtering counts |
+| `sp_tags.spatial_positions.csv` | CID mode with a coordinate whitelist: CID coordinates (`tissue_positions.csv` layout) |
+| `sp_tags.spots.tsv` / `sp_tags.spot_positions.csv` | Spot mode: per-spot CIDs, reads and centroid |
 
-**Read header format** of `sp_tags.fastq` (tab-separated):
+Read header (tab-separated tags; minimap2 `-y` copies them into the SAM, then use `quantify --no_barcode_in_readname`):
 
 ```
-# default (per CID)
-@<read_id>_<start>_<end>_<strand>_<CID>_<MID>  CB:Z:<CID>  CR:Z:<raw CID>  UB:Z:<MID>  UR:Z:<raw MID>
-# --barcode2spot (per spot)
-@<read_id>_<start>_<end>_<strand>_<spot>_<CID><MID>  CB:Z:<spot>  CR:Z:<raw CID>  UB:Z:<CID><MID>  UR:Z:<raw MID>  XC:Z:<CID>
+@<read>_<start>_<end>_<strand>_<CID>_<MID>          CB:Z:<CID>   UB:Z:<MID>       CR:Z:<raw CID> UR:Z:<raw MID>
+@<read>_<start>_<end>_<strand>_<spot>_<CID><MID>    CB:Z:<spot>  UB:Z:<CID><MID>  CR:Z:... UR:Z:... XC:Z:<CID>   # --barcode2spot
 ```
-
-- `<read_id>_<start>_<end>_<strand>`: original read name and the molecule's position in the read (only `<read_id>` with `--no_split`)
-- `CB` / `UB`: cell barcode / UMI used by `quantify` (see [Quantification unit](#quantification-unit-cid-or-spot)); `CR` / `UR`: CID / MID as read from the sequence before correction; `XC`: corrected CID (spot mode only)
-- Sequences keep their base qualities and are oriented capture-oligo first (adapters are left in place; minimap2 soft-clips them)
-
-Because the CID and MID are stored both at the end of the read name and as SAM tags, both barcode modes of `quantify` work:
-
-| Alignment | `quantify` options |
-|---|---|
-| `minimap2 ... sp_tags.fastq` | `--st_mode` (default `--barcode_in_readname`) |
-| `minimap2 -y ... sp_tags.fastq` (copies the tags into the SAM) | `--st_mode --no_barcode_in_readname` |
 
 ### MID (UMI) handling
 
-A Stereo-seq MID passes through three stages. The first runs in `sp_tags` before alignment, the second is a separate post-alignment step, and the third is built into `quantify`:
+| Stage | Tool | Scope | MID matching | Removes reads |
+|---|---|---|---|---|
+| 1. Correction | `sp_tags` (before alignment) | each CID | edit distance ≤ 1 | no |
+| 2. Deduplication | `run_umi_dedup.py` (after alignment) | each CID **and gene** | edit distance ≤ 4 | yes, one read per molecule |
+| 3. Counting | `quantify --st_mode` | each cell / CID, per gene | exact `CB` + `UB` | — |
 
-| Stage | Tool | What it does | Scope | MID matching | Reads removed? |
-|---|---|---|---|---|---|
-| 1. Correction | `sp_tags` (before alignment) | Extracts the MID and replaces sequencing-error variants by the more frequent MID they are close to | each CID | edit distance ≤ `--umi_ed` (default 1) | no |
-| 2. Deduplication | `sp_tags/run_umi_dedup.py` (after alignment) | Merges MIDs of the same molecule and keeps one representative read per molecule | each CID **and gene** | edit distance ≤ `--umi_ed` (default 4) | yes |
-| 3. Counting | `quantify --st_mode` | Reads with identical `CB` + `UB` within a gene community count as one molecule | each cell / CID | exact match | — |
-
-Stages 1 and 3 always run; stage 2 is recommended for ONT reads and optional for PacBio HiFi (spl-IsoQuant runs it for every read technology).
-
-**Stage 1 — before alignment (`sp_tags`).** Identical for PacBio and ONT (`--data_type` only changes the CID k-mer size):
-
-1. **Extraction**: the bases between the end of the linker and the start of the polyT (expected 10 nt). If fewer than 6 nt separate them (misplaced polyT), the 10 nt after the linker are taken.
-2. **Trailing-T rescue**: the polyT start snaps to the first `TTTT`, which swallows MID bases ending in T; if the missing bases are all T, the MID is restored to 10 nt.
-3. **Length check**: MIDs of 10 ± 3 nt (± 4 with `--no_split`) are marked valid in `sp_tags.tags.tsv`. They are only flagged, unless `--require_good_umi` drops the others; ONT reads, rich in indels, lose many molecules with this option.
-4. **Filtering**: molecules without a MID, and molecules of concatenated reads not closed by a TSO, are not written.
-5. **Correction**: within each CID, MIDs are sorted by read count (ties: length closer to 10 first) and each is merged into the closest already accepted MID within `--umi_ed` edits (substitutions and indels). `UB` holds the corrected MID (CID + MID with `--barcode2spot`), `UR` the raw one.
-
-Before alignment, gene information is missing, so MIDs can only be compared within a CID across all genes. The edit distance is kept at 1 because a larger one would merge distinct molecules of different genes in the same CID. That is enough for PacBio HiFi (about 1 % of 10-nt MIDs carry an error) but not for ONT (20–50 %).
-
-**Stage 2 — after alignment (`run_umi_dedup.py`).** The deduplication strategy and its parameters follow spl-IsoQuant (`isoquant_lib/barcode_calling/umi_filtering.py`, `UMIFilter`; Stereo-seq edit distance 4 from `umi_ed_dict` in `dataset_processor.py`). The code is a reimplementation for miniTEQuant, because gene assignment works differently (see below):
-
-1. Each primary alignment is assigned to the gene whose merged exons it overlaps most. Reads from `sp_tags` are antisense to the mRNA, so genes on the opposite strand of the alignment are preferred.
-2. Reads are grouped by (CID, gene). In spot mode (`--barcode2spot`) the CID is taken from the `XC` tag, so molecules are still compared within their own CID.
-3. MIDs in each group are clustered greedily: sorted by read count (ties: length closer to `--umi_length`), each MID joins the closest already accepted MID within `--umi_ed` edits, otherwise it starts a new molecule.
-4. One read per molecule is kept: unambiguous gene > more exons > more aligned bases > higher MAPQ. Secondary, supplementary and unmapped records are removed; reads outside genes are kept unchanged.
-
-*Why group by gene.* Grouping decides which reads may be copies of one molecule. PCR copies of a molecule always align to the same gene, and identical MIDs in different genes can only be two molecules that collide by chance. Within one gene of one ~0.5 µm CID there are only a few molecules, so two genuine 10-nt MIDs are rarely within 4 edits. That makes an edit distance of 4 safe, enough to absorb ONT errors, where 1 is the limit across all genes of a CID (stage 1).
-
-*Why not group by isoform.* Copies of one molecule are often truncated differently (especially at the 5' end) and can then be assigned to different isoforms, or ambiguously. Grouping by isoform would keep such copies apart. spl-IsoQuant therefore also groups by (gene, barcode), and so does `run_umi_dedup.py`. Grouping needs the gene only; isoform assignments are not used for deciding which reads form one molecule.
-
-*Differences from spl-IsoQuant.* In spl-IsoQuant, a read's gene comes from its own read-to-isoform assignment, which also feeds two secondary uses: preferring a uniquely assigned read as representative, and clearing transcript / polyA annotations that differ between copies. In miniTEQuant, isoforms are resolved later by the EM inside `quantify`, so these assignments do not exist at this point:
-
-| Aspect | spl-IsoQuant | `run_umi_dedup.py` | Effect |
-|---|---|---|---|
-| Gene of a read | from its isoform assignment (intron chain matching etc.) | gene with the largest exon overlap, opposite strand preferred | may differ in overlapping genes; copies of one molecule align alike and still land in the same group |
-| Representative read, 1st criterion | unique isoform assignment > ambiguous | single overlapping gene > several | chooses which copy is kept, not how many molecules are counted |
-| Representative read, next criteria | more exons > longer genomic span | more exons > more aligned bases > higher MAPQ | — |
-| Annotation clean-up among copies | yes | no | not used by miniTEQuant |
-| Reads outside genes | handled by its assignment | kept, not deduplicated | not quantified by `quantify`, which counts annotated isoforms only |
-| Grouping, clustering, edit distance | (gene, barcode); greedy by count; 4 for Stereo-seq | same | — |
-
-An annotation-free alternative would group reads by overlapping alignment loci (as UMI-tools does), which would also deduplicate unannotated transcripts; since `quantify` counts annotated isoforms only, grouping by gene is sufficient.
-
-**Stage 3 — `quantify --st_mode`.** Within each gene community, reads with the same `CB` and `UB` are merged into one molecule before the per-cell EM, so counts are molecules, not reads. Matching is exact: a MID with one remaining error counts as a second molecule, which is what stages 1 and 2 prevent. (`--umi_dedup_hamming` is not applied in this mode; see [Single-cell mode arguments](#single-cell-mode-arguments).)
+- **Stage 1** is conservative: without gene information, a larger edit distance would merge distinct molecules of different genes in the same CID.
+- **Stage 2** follows spl-IsoQuant's `UMIFilter` (code reimplemented). Each read is assigned to the gene it overlaps most (antisense strand preferred). MIDs within a (CID, gene) group are clustered greedily by read count. The kept read is chosen by unambiguous gene > more exons > more aligned bases > higher MAPQ. Grouping is by gene rather than isoform because truncated copies of one molecule may be assigned to different isoforms. Recommended for ONT, optional for PacBio HiFi.
+- **Stage 3** is exact matching (`--umi_dedup_hamming` is not applied in ST / SC modes).
 
 ```bash
 python isoform_quantification/sp_tags/run_umi_dedup.py \
-    -i LR.sorted.bam -g annotation.gtf -o LR.dedup.sam -t 8
+    -i LR.sorted.bam -g annotation.gtf -o LR.dedup.sam [--umi_ed 4] [-t 8]
 ```
 
-| Argument | Default | Description |
-|---|---|---|
-| `-i` / `--input` (required) | — | Alignments of `sp_tags` reads: SAM, SAM.gz or BAM (BAM is read with `samtools view`) |
-| `-g` / `--gtf` (required) | — | Gene annotation (GTF, optionally `.gz`) |
-| `-o` / `--output` (required) | — | Output SAM, one alignment per molecule; pass it to `quantify -lrsam` |
-| `--umi_ed` | `4` | Max edit distance to merge MIDs within one CID and gene |
-| `--umi_length` | `10` | Expected MID length, used to break ties between MIDs |
-| `--name_sep` | `_` | Read-name separator, used only when alignments lack the CB/UB tags (minimap2 without `-y`) |
-| `--stats` | `<output>.umi_dedup.stats.tsv` | Statistics: primary alignments, reads in genes, molecules, duplicates removed, mean reads per molecule (×100) |
-| `-t` / `--threads` | `4` | samtools threads for BAM input |
-
-The input is read twice and needs no sorting or index; memory grows with the number of reads in genes (roughly 150 bytes each). Pass the output SAM to `quantify -lrsam`.
+Input can be SAM, SAM.gz or BAM (no sorting needed). The statistics go to `<output>.umi_dedup.stats.tsv` (or `--stats`); pass the output SAM to `quantify -lrsam`.
 
 ### ONT reads (Stereo-seq + Nanopore)
 
-Following spl-IsoQuant (whose Stereo-seq mode is designed for ONT reads and uses the same barcode detection for every read technology), Stereo-seq + ONT data go through the same molecule structure detection and MID extraction as PacBio HiFi. Three things differ:
+Barcode detection is the same as for PacBio (as in spl-IsoQuant); three steps differ:
 
 | Step | PacBio HiFi | ONT |
 |---|---|---|
-| `sp_tags` | `--data_type pacbio` (default) | `--data_type nanopore` (whitelist k-mer 12 instead of 14) |
-| minimap2 | `-ax splice:hq` | `-ax splice -k14` (spl-IsoQuant ONT settings; the k-mer size is stored in a `.mmi` index, so build a separate index with `-x splice -k14`) |
-| MID deduplication by gene (`run_umi_dedup.py`) | optional | **recommended** |
+| `sp_tags` | `--data_type pacbio` | `--data_type nanopore` (CID k-mer 12) |
+| minimap2 | `-ax splice:hq` | `-ax splice -k14` (build the index with `-x splice -k14`) |
+| `run_umi_dedup.py` | optional | recommended |
 
-**Simulated test** (Stereo-seq ONT reads with 2–8 % errors, 20,000-CID whitelist; 1,038 molecules in 2,611 reads with 1–4 PCR copies each):
-
-| Read error | CIDs recovered, k = 14 | CIDs recovered, k = 12 | Wrong CID |
-|---|---|---|---|
-| 2 % | 88.6 % | 95.0 % | 0 |
-| 5 % | 65.2 % | 73.4 % | 0 |
-| 8 % | 43.2 % | 50.9 % | 0 |
-
-At 5 % error, molecules still carried 1.47 distinct MIDs on average after `sp_tags`; `run_umi_dedup.py --umi_ed 4` reduced this to 1.03 reads per molecule, wrongly merging 2 of 935 molecules (`--umi_ed 3`: 1.09, 1 merged; `--umi_ed 5`: 1.015, 7 merged). Lowering `--min_bc_score` to 21 recovers more CIDs (80 % at 5 % error) but, extrapolated from random queries against a 2-million-CID whitelist, assigns about 1 % of unmatched reads to a wrong CID on a ~180-million-CID chip, so the default of 22 (CID length − 3, as in spl-IsoQuant) is kept. Recovery depends mostly on basecalling accuracy: use the most accurate dorado model (SUP) available.
+In simulations with 5 % read error, k-mer 12 recovered 73 % of CIDs (65 % with k-mer 14) with no wrong CIDs, and `--umi_ed 4` reduced reads per molecule from 1.47 to 1.03 while merging 2 of 935 true molecules. CID recovery depends mostly on basecalling accuracy, so use the dorado SUP model.
 
 ### Notes
 
-- **Performance**: `sp_tags` runs without extra dependencies. If `numba` (or `ssw-py`) is installed, adapter alignment is accelerated automatically; without either, a slow pure-Python fallback is used and a warning is printed.
-- **Memory**: whitelists with millions of CIDs switch to a dense index of roughly 2 GB plus ~56 bytes per CID; with `-t > 1` on Linux, worker processes share the index instead of copying it.
-- **PacBio Kinnex / MAS-seq**: `sp_tags` splits reads by the Stereo-seq molecule structure and does not recognise Kinnex/MAS-seq segmentation adapters. Run PacBio `skera` first for such libraries.
-- **Spatial coordinates**: `quantify` does not yet attach `--tissue_positions` to its output (see [Spatial transcriptomics mode arguments](#spatial-transcriptomics-mode-arguments)); join `sp_tags.spatial_positions.csv` (or `sp_tags.spot_positions.csv` in spot mode) with `ST_output/isoform/barcodes.tsv` on the barcode column downstream.
-- **Binning / cells**: without `--barcode2spot`, counts are per CID (bin1). For cellbin or bin50 counts, pass a CID → cell / bin mapping with `--barcode2spot`.
-- **`quantify --barcode_whitelist` in spot mode**: the barcodes are now spot names, so do not pass the CID whitelist to `quantify` (it would discard every read); pass a list of spot names or leave it out.
+- **Speed / memory**: install `numba` to accelerate adapter alignment (a pure-Python fallback is slow). Large whitelists use about 2 GB plus ~56 bytes per CID, so crop the whitelist to the tissue region.
+- **Kinnex / MAS-Seq**: run PacBio `skera split` first.
+- **Coordinates**: `quantify` does not attach coordinates; join `sp_tags.spatial_positions.csv` / `sp_tags.spot_positions.csv` with `ST_output/isoform/barcodes.tsv` downstream.
+- **Spot mode**: do not pass the CID whitelist to `quantify --barcode_whitelist`, because barcodes are now cell / spot names.
 
 ---
 
