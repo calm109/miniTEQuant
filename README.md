@@ -50,7 +50,7 @@ conda install -c bioconda samtools
 
 ```bash
 # nailpolish (Linux precompiled binary)
-wget https://github.com/DavidsonGroup/nailpolish/releases/download/nightly_develop/nailpolish
+wget https://github.com/DavidsonGroup/nailpolish/releases/download/v0.2.3/nailpolish
 chmod +x nailpolish
 mkdir -p ~/bin && mv nailpolish ~/bin/
 echo 'export PATH=~/bin:$PATH' >> ~/.bashrc && source ~/.bashrc
