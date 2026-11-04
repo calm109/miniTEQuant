@@ -50,6 +50,7 @@ conda install -c bioconda samtools
 
 ```bash
 # nailpolish (Linux precompiled binary)
+# Run the commands below. They create a `bin` folder in your **home directory** (`~/bin`) and put `nailpolish` there.
 wget https://github.com/DavidsonGroup/nailpolish/releases/download/v0.2.3/nailpolish
 chmod +x nailpolish
 mkdir -p ~/bin && mv nailpolish ~/bin/
